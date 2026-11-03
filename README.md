@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Claude_Code-%E2%89%A5_2.1.306-D97757?logo=claude&logoColor=fff" alt="Claude Code 2.1.306 or newer">
-  <img src="https://img.shields.io/badge/version-0.7.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.7.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/type-mod-6f42c1" alt="Claude Code mod">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
@@ -59,7 +59,7 @@ An install fails with `Unrecognized key: "options"` on Claude Code older than 2.
 - Git and GitHub commands Claude runs show as a status line at the bottom of the pane
 - The selected file goes to Claude as context, and `@path` in a prompt reveals that file
 - Right column cycles date, size, lines of code and number of files from the header button, with git counts in their own columns beside it; a folder's date is its newest file
-- Split preview under or above the tree: highlighted code, rendered Markdown, images, video poster frames, and PDF and Word pages turned with `[` and `]`
+- Split preview under or above the tree: highlighted code, rendered Markdown, images, video poster frames, and PDF and Word pages turned with `[` and `]`; images draw as half-block cells in terminals without graphics, such as Alacritty
 - Treemap of the folder under the cursor in the same split, sized by bytes or by lines, with Claude's activity lit
 - `d` shows the diff of a file or of every changed file in a folder, in the pane or in a tool you name
 - Open files in their default app, an editor in a tmux or herdr pane, or any command
@@ -74,6 +74,8 @@ An install fails with `Unrecognized key: "options"` on Claude Code older than 2.
 ### Preview and treemap
 
 `p` or the header button shows the split. On a file it shows the file; on a folder, the root row or nothing it shows the treemap.
+
+Pictures draw as pixels where the terminal speaks the kitty graphics protocol. Anywhere else (Alacritty, tmux) they draw as half-block cells, two pixels per cell, scaled by `magick` or `ffmpeg`: enough to tell a chart or a screenshot apart, not to read its labels. The Pictures setting forces either way.
 
 <img src="docs/media/preview-media.gif" alt="An image, a video, a PDF turned to page 2 and a Word document in the preview" width="800">
 
@@ -149,6 +151,7 @@ Terminal target:  auto | pane right | pane below | tab | workspace
 Ignore:           names to hide, such as ".cache .tmp"
 Preview pane:     bottom | top
 Treemap:          auto | image | cells | off
+Pictures:         auto | pixels | blocks
 Palette:          key=#hex pairs over the terminal colors
 Glyphs:           auto | nerd | plain | text
 ```
@@ -169,7 +172,7 @@ optional:
   pandoc, pdftotext:      document text in tmux, herdr and other terminals
   tmux or herdr:          an editor or diff tool in a new pane
   Nerd Fonts 3.2+:        icons for Glyphs auto, which draws plain Unicode without one or with an older one
-pictures:  Ghostty or kitty, outside tmux and herdr, on Linux and macOS
+pictures:  Ghostty, kitty or iTerm2, outside tmux and herdr, on Linux and macOS; elsewhere half-block cells through magick or ffmpeg
 ```
 
 ## Considerations

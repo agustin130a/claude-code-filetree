@@ -2,6 +2,7 @@ import { type EngineInterface, type HookStream, type ProcessSpawnResult, type Re
 import { herdrError, herdrOpenCommand, herdrPane, isBinaryPath, LINUX_LAUNCH, openCommand, openWithCommand, type Target, terminalTarget, tmuxCommand, tmuxOpenCommand, words } from './open'
 import type { ButtonProps } from './button'
 import { CACHE_KEEP, cacheName, CLEAN, coderFor, EXIT_FAILED, EXIT_LOCKED, EXIT_MISSING, fitCells, PNG_DIRECT_BYTES, PNG_DIRECT_PIXELS, pictureKind, pngSize, POLICY, POSTER } from './peek'
+import { BLOCK_POLICY, blockRows, BLOCKS, EXIT_NO_DRAWER, parseRgb } from './blocks'
 
 import type { Activity, FileNode, FileTree, Theme } from '../types'
 import { BRANCH_ICON, chainOf, type GitAction, gitActions, LIGHT_TONES, readOnly, readTargets, resolve, TONES } from './git'
@@ -202,7 +203,11 @@ let shortcutsSetting: 'auto' | 'always' | 'off' = 'auto'
 let shortcutsShown = false
 let shortcutsTimer = 0
 let treemapSetting: 'auto' | 'image' | 'cells' | 'off' = 'auto'
+let picturesSetting: 'auto' | 'pixels' | 'blocks' = 'auto'
 let kittyTerm = false
+let pixelTerm = false
+type Blocks = { state: 'pending' } | { state: 'ready'; rows: Seg[][] } | { state: 'failed'; note: string }
+const blocksCache = new Map<string, Blocks>()
 let imageDenied = false
 let imageChecked = false
 let cellPx: { cw: number; ch: number } | null = null
@@ -1934,6 +1939,42 @@ async function pngOf($: EngineInterface, pic: { file: string; generation: number
   return base64
 }
 
+function blocksOf($: EngineInterface, pic: { file: string; generation: number }, columns: number, rows: number, paper: Rgb): Blocks {
+  const key = `${pic.file}\0${pic.generation}\0${columns}x${rows}`
+  const known = blocksCache.get(key)
+  if (known) {
+    blocksCache.delete(key)
+    blocksCache.set(key, known)
+    return known
+  }
+  const pending: Blocks = { state: 'pending' }
+  blocksCache.set(key, pending)
+  for (const old of blocksCache.keys()) {
+    if (blocksCache.size <= CACHE_KEEP) break
+    blocksCache.delete(old)
+  }
+  const hex = `#${paper.map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`
+  void (async () => {
+    let made: Blocks
+    try {
+      const run = await $.process.run(['sh', '-c', BLOCKS, 'sh', pic.file, pictureBase, String(columns), String(rows * 2), BLOCK_POLICY, hex], { timeoutMs: 30_000 })
+      const why = run.stderr.trim().split('\n').filter(Boolean)[0] ?? ''
+      if (run.exitCode === EXIT_NO_DRAWER) made = { state: 'failed', note: why || 'no magick or ffmpeg on PATH to draw it' }
+      else if (run.exitCode !== 0) made = { state: 'failed', note: `could not draw${why ? `: ${why}` : ''}` }
+      else {
+        const px = parseRgb(run.stdout, columns, rows * 2)
+        made = px ? { state: 'ready', rows: blockRows(px, columns, rows) } : { state: 'failed', note: 'could not read the pixels' }
+      }
+    } catch (err) {
+      made = { state: 'failed', note: messageOf(err).split('\n')[0] ?? 'could not draw' }
+    }
+    if (blocksCache.get(key) !== pending) return
+    blocksCache.set(key, made)
+    void $.ui.invalidate('ui.render')
+  })()
+  return pending
+}
+
 async function spawnRun($: EngineInterface, job: PictureJob, argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string } | null> {
   const stream = $.process.spawn({ argv })
   let stopped = false
@@ -2611,6 +2652,7 @@ export const register: Register = (on, options) => {
   shortcutsSetting = options?.shortcuts === 'always' || options?.shortcuts === 'off' ? options.shortcuts : 'auto'
   shortcutsShown = shortcutsSetting === 'always'
   treemapSetting = options?.treemap === 'image' || options?.treemap === 'cells' || options?.treemap === 'off' ? options.treemap : 'auto'
+  picturesSetting = options?.pictures === 'pixels' || options?.pictures === 'blocks' ? options.pictures : 'auto'
   openWithSetting = typeof options?.open === 'string' ? options.open : ''
   binariesInDefaultApp = options?.binaries === 'default app'
   editWithSetting = typeof options?.edit === 'string' ? options.edit.trim() : ''
@@ -2642,6 +2684,7 @@ export const register: Register = (on, options) => {
         pointer = await finePointerOk($)
         const termProgram = await $.env.get('TERM_PROGRAM')
         kittyTerm = !windows && !inTmux && !inHerdr && (termProgram === 'ghostty' || Boolean(await $.env.get('KITTY_WINDOW_ID')) || /kitty|ghostty/.test((await $.env.get('TERM')) ?? ''))
+        pixelTerm = kittyTerm || (!windows && !inTmux && !inHerdr && termProgram === 'iTerm.app')
         if (treemapSetting === 'image' || (treemapSetting === 'auto' && kittyTerm)) {
           cellPx = await cellPixels($)
           if (termProgram === 'ghostty') termColors = await ghosttyColors($)
@@ -3605,7 +3648,8 @@ export const register: Register = (on, options) => {
       const name = shown ? (shown === t.root ? shown.split('/').pop() || shown : inside(t.root, shown) ? relative(t.root, shown) : shortPath(shown)) : ''
       const docKind = target ? pictureKind(target) : ''
       const isDoc = docKind === 'pdf' || docKind === 'office'
-      const docPixels = Boolean(Image) && !imageDenied && !inTmux && !inHerdr
+      const drawPixels = Boolean(Image) && (picturesSetting === 'pixels' || (picturesSetting === 'auto' && pixelTerm))
+      const docPixels = drawPixels && !imageDenied && !inTmux && !inHerdr
       const page = isDoc ? (docPages.get(target) ?? 1) : 0
       const px = Math.round(Math.max(1, e.props.bodyColumns - 1) * (cellPx?.cw ?? 10))
       const raw = target && (!isDoc || docPixels) ? await picture($, target, page, px) : null
@@ -3715,11 +3759,19 @@ export const register: Register = (on, options) => {
           : <Text {...mutedText}>{scan.done ? 'empty' : 'sizing…'}</Text>
       } else if (!target) content = <Text {...mutedText}>no file selected</Text>
       else if (pic) {
-        if (pic.state === 'ready' && Image) {
+        if (pic.state === 'ready' && Image && drawPixels) {
           const fit = fitCells(pic, Math.max(1, e.props.bodyColumns - 1), peekRows)
           status = isDoc ? `p ${page}/${pic.pages ?? '?'}` : `${pic.width}×${pic.height}`
           const png = await pngOf($, pic)
           content = png ? <Image key="peek-image" source={{ png }} columns={fit.columns} rows={fit.rows} alt={name} /> : <Text {...mutedText}>{name}</Text>
+        } else if (pic.state === 'ready') {
+          const fit = fitCells(pic, Math.max(1, e.props.bodyColumns - 1), peekRows)
+          status = isDoc ? `p ${page}/${pic.pages ?? '?'}` : `${pic.width}×${pic.height}`
+          const paper = termColors.bg ?? (theme.bg ? colorOf(theme.bg, termColors, light) : light ? ([255, 255, 255] satisfies Rgb) : ([24, 24, 24] satisfies Rgb))
+          const made = blocksOf($, pic, fit.columns, fit.rows, paper)
+          content = made.state === 'ready'
+            ? <Box key="peek-blocks" flexDirection="column">{made.rows.map((segs, y) => <Box key={`blocks-${y}`} flexDirection="row" height={1} overflow="hidden">{segs.map((s, x) => <Text key={`block-${y}-${x}`} color={s.c} backgroundColor={s.bg}>{s.t}</Text>)}</Box>)}</Box>
+            : <Text {...mutedText}>{made.state === 'pending' ? 'drawing…' : made.note}</Text>
         } else content = <Text {...mutedText}>{pic.state === 'pending' ? 'decoding…' : pic.state === 'failed' ? pic.note : 'images show in the terminal'}</Text>
       } else {
         if (isDoc && (peeked?.path !== target || (docKind === 'pdf' && peeked.page !== page))) {

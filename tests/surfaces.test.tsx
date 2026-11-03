@@ -5,6 +5,7 @@ import type { ZoneProps } from '../hooks/zone'
 
 import { LINUX_LAUNCH, TMUX_OPEN, TMUX_WORKSPACE } from '../hooks/open'
 import { CLEAN, POLICY, POSTER } from '../hooks/peek'
+import { BLOCK, BLOCK_POLICY, BLOCKS, blockRows, parseRgb } from '../hooks/blocks'
 import { compileRegex } from '../hooks/regex'
 import { ICONS } from '../hooks/svg'
 import { jumpMatch, rankJump, terms } from '../hooks/jump'
@@ -2266,7 +2267,7 @@ test('/filetree on a tree hidden behind another tab brings it forward instead of
 const PNG_HEAD = '137 80 78 71 13 10 26 10 0 0 0 13 73 72 68 82 0 0 3 32 0 0 1 144'
 
 
-test('split preview: a PDF draws its page as a picture with p N/M, prefetches the next page, ] and [ turn pages within the count, and a docx is converted once for every page', { timeoutMs: 20_000 }, async ($, on) => {
+test('split preview: a PDF draws its page as a picture with p N/M, prefetches the next page, ] and [ turn pages within the count, and a docx is converted once for every page', { timeoutMs: 20_000, options: { pictures: 'pixels' } }, async ($, on) => {
   const ran: Ran = []
   const root = '/home/k/proj'
   const cache = '/run/user/1000/filetree-preview-1000/test-session'
@@ -2316,7 +2317,7 @@ test('split preview: a PDF draws its page as a picture with p N/M, prefetches th
   expect(office[1]?.[14]).toBe(office[0]?.[14])
 })
 
-test('split preview: the header button shows the file under the cursor below a rule, the wheel, Page Down, f and End scroll it with a scrollbar, pictures draw as images, and the button hides it', { timeoutMs: 20_000 }, async ($, on) => {
+test('split preview: the header button shows the file under the cursor below a rule, the wheel, Page Down, f and End scroll it with a scrollbar, pictures draw as images, and the button hides it', { timeoutMs: 20_000, options: { pictures: 'pixels' } }, async ($, on) => {
   const ran: Ran = []
   const root = '/opt/k/proj'
   const clock = world(on, {
@@ -2392,6 +2393,69 @@ test('split preview: the header button shows the file under the cursor below a r
   shown = JSON.stringify(await ui.drawn())
   expect(shown).not.toContain('──')
   expect(shown).not.toContain('"Image"')
+  await ui.unmount()
+})
+
+test('pictures auto outside kitty, Ghostty and iTerm2: an image draws as half-block cells scaled by the drawer script, one run per shade, and a missing drawer says so', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/opt/k/proj'
+  const red = [255, 0, 0]
+  const blue = [0, 0, 255]
+  const pixels = Array.from({ length: 59 * 30 * 3 }, (_, i) => (Math.floor(i / 3) < 59 * 15 ? red : blue)[i % 3]).join(' ')
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/opt/k', XDG_RUNTIME_DIR: '/run/user/1000', TERM: 'xterm-256color' }, cwd: root, top: '', status: '', numstat: '',
+    dirs: { [root]: [['a.ts', 'file'], ['b.png', 'file']] },
+    files: { [`${root}/a.ts`]: 'const a = 1\n' },
+    stdout: { 'od -An -tu1': PNG_HEAD, [`sh -c ${BLOCKS}`]: pixels },
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await ui.press({ key: 'split' })
+  await ui.post({ key: 'k' }, { in: 'rows' })
+  await ui.post({ key: 'j' }, { in: 'rows' })
+  await clock.settle()
+  await clock.settle()
+  const shown = JSON.stringify(await ui.drawn())
+  expect(shown).not.toContain('"Image"')
+  expect(shown).toContain('800×400')
+  expect(shown).toContain(`"color":"#ff0000","backgroundColor":"#ff0000"`)
+  expect(shown).toContain(`"color":"#ff0000","backgroundColor":"#0000ff"`)
+  expect(shown).toContain(`"color":"#0000ff","backgroundColor":"#0000ff"`)
+  expect(shown).toContain(BLOCK.repeat(59))
+  const drawer = ran.find(a => a[0] === 'sh' && a[2] === BLOCKS)
+  expect(drawer?.slice(4, 9)).toEqual([`${root}/b.png`, '/run/user/1000', '59', '30', BLOCK_POLICY])
+  expect(drawer?.[9]).toMatch(/^#[0-9a-f]{6}$/)
+  expect(ran.filter(a => a[0] === 'sh' && a[2] === BLOCKS)).toHaveLength(1)
+  expect(BLOCKS).toContain('MAGICK_CONFIGURE_PATH="$d"')
+  expect(BLOCKS).toContain('"png:$src[0]"')
+  expect(BLOCKS).toContain('-pix_fmt rgb24')
+  expect(BLOCK_POLICY).toContain('<policy domain="coder" rights="write" pattern="RGB"/>')
+  expect(parseRgb('1 2 3 4 5 6', 2, 1)?.length).toBe(6)
+  expect(parseRgb('1 2 3 4 5', 2, 1)).toBeNull()
+  expect(parseRgb('1 2 3 4 5 256', 2, 1)).toBeNull()
+  const rows = blockRows(Uint8Array.from([250, 1, 0, 249, 2, 0, 0, 0, 10, 0, 0, 11]), 2, 1)
+  expect(rows).toEqual([[{ t: `${BLOCK}${BLOCK}`, c: '#f80000', bg: '#000008' }]])
+  await ui.unmount()
+})
+
+test('pictures auto outside kitty: a drawer that is missing or fails says why', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/opt/k/proj'
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/opt/k', XDG_RUNTIME_DIR: '/run/user/1000' }, cwd: root, top: '', status: '', numstat: '',
+    dirs: { [root]: [['b.png', 'file']] },
+    stdout: { 'od -An -tu1': PNG_HEAD },
+    exits: { sh: [3, 'no magick or ffmpeg on PATH to draw it'] },
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await ui.press({ key: 'split' })
+  await ui.post({ key: 'k' }, { in: 'rows' })
+  await clock.settle()
+  await clock.settle()
+  expect(JSON.stringify(await ui.drawn())).toContain('no magick or ffmpeg on PATH to draw it')
   await ui.unmount()
 })
 
@@ -2485,7 +2549,7 @@ test('split preview on desktop: p does nothing and Page Down still moves the tre
   await ui.unmount()
 })
 
-test('split preview: a cached picture another session pruned is decoded again, and the session folder goes when the session ends', { timeoutMs: 20_000 }, async ($, on) => {
+test('split preview: a cached picture another session pruned is decoded again, and the session folder goes when the session ends', { timeoutMs: 20_000, options: { pictures: 'pixels' } }, async ($, on) => {
   const ran: Ran = []
   const root = '/home/k/proj'
   const cache = '/run/user/1000/filetree-preview-1000/test-session'

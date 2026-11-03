@@ -1,6 +1,6 @@
 {
   "name": "filetree",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "An IDE-style file tree for Claude Code that shows what Claude is doing and where in files",
   "types": "./types/index.d.ts",
   "author": {
@@ -225,6 +225,17 @@
         "image",
         "cells",
         "off"
+      ]
+    },
+    "pictures": {
+      "type": "string",
+      "title": "Pictures",
+      "description": "How the split preview draws an image or a video poster frame. auto: pixels through the kitty graphics protocol in Ghostty, kitty and iTerm2, outside tmux and herdr, and half-block cells (▀ colored per pixel pair, scaled with magick or ffmpeg) in every other terminal, such as Alacritty, where PDF and office pages fall back to their text. pixels: always send the picture to the terminal, which shows its name where it cannot draw it. blocks: always draw half-block cells.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "pixels",
+        "blocks"
       ]
     },
     "palette": {
